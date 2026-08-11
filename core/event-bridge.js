@@ -14,7 +14,7 @@ function resolveMessage(value) {
   const context = getTavernContext();
   const chat = context?.chat || window.chat || [];
   if (typeof value === 'number' && chat[value]) return { ...chat[value], message_id: value };
-  if (typeof value === 'string' && /^\\d+$/.test(value) && chat[Number(value)]) return { ...chat[Number(value)], message_id: Number(value) };
+  if (typeof value === 'string' && /^\d+$/.test(value) && chat[Number(value)]) return { ...chat[Number(value)], message_id: Number(value) };
   if (Array.isArray(value)) return resolveMessage(value.at(-1));
   if (value && typeof value === 'object') {
     if (typeof value.message_id === 'number' && chat[value.message_id]) return { ...chat[value.message_id], ...value };

@@ -1,6 +1,6 @@
 :root { --sf-bg:#202124; --sf-panel:#292b30; --sf-panel-2:#32353b; --sf-line:#454850; --sf-accent:#8b9cff; --sf-text:#f0f1f4; --sf-muted:#aeb2bc; }
 #scene-frame-root { position:fixed; right:16px; bottom:72px; z-index:99999; font-family:inherit; color:var(--sf-text); }
-.sf-fab { position:fixed; width:52px; height:52px; border:1px solid var(--sf-line); border-radius:50%; color:var(--sf-text); background:var(--sf-panel); font-size:22px; cursor:grab; touch-action:none; user-select:none; -webkit-user-select:none; box-shadow:none; }
+.sf-fab { position:fixed; right:16px; bottom:72px; width:52px; height:52px; border:1px solid var(--sf-line); border-radius:50%; color:var(--sf-text); background:var(--sf-panel); font-size:22px; cursor:grab; touch-action:none; user-select:none; -webkit-user-select:none; box-shadow:none; }
 .sf-fab:active,.sf-fab.sf-grabbing { cursor:grabbing; background:var(--sf-panel-2); }
 .sf-sheet { position:fixed; right:12px; bottom:132px; width:min(390px,calc(100vw - 24px)); max-height:65vh; overflow:auto; padding:16px; border:1px solid var(--sf-line); border-radius:18px; background:var(--sf-panel); box-shadow:none; }
 .sf-hidden { display:none; }

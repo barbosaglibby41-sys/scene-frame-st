@@ -50,26 +50,28 @@ function placeFab(fab) {
   }
 }
 function makeFabDraggable(fab) {
-  let startX = 0, startY = 0, left = 0, top = 0, dragging = false;
-  fab.addEventListener('pointerdown', event => {
-    if (event.button != null && event.button !== 0) return;
-    const rect = fab.getBoundingClientRect(); startX = event.clientX; startY = event.clientY; left = rect.left; top = rect.top; dragging = false;
-    fab.setPointerCapture?.(event.pointerId); fab.classList.add('sf-grabbing');
-  });
-  fab.addEventListener('pointermove', event => {
-    if (!fab.hasPointerCapture?.(event.pointerId)) return;
+  let startX = 0, startY = 0, left = 0, top = 0, dragging = false, activeId = null;
+  const move = event => {
+    if (activeId == null || event.pointerId !== activeId) return;
     const dx = event.clientX - startX, dy = event.clientY - startY;
     if (Math.abs(dx) + Math.abs(dy) > 6) dragging = true;
     if (!dragging) return;
     const x = clamp(left + dx, 8, innerWidth - fab.offsetWidth - 8), y = clamp(top + dy, 8, innerHeight - fab.offsetHeight - 8);
     fab.style.left = `${x}px`; fab.style.top = `${y}px`; fab.style.right = 'auto'; fab.style.bottom = 'auto';
-  });
+  };
   const finish = event => {
-    if (!fab.hasPointerCapture?.(event.pointerId)) return;
-    fab.releasePointerCapture?.(event.pointerId); fab.classList.remove('sf-grabbing');
+    if (activeId == null || event.pointerId !== activeId) return;
+    activeId = null; fab.classList.remove('sf-grabbing');
     if (dragging) { const rect = fab.getBoundingClientRect(); state.settings.fabPosition = { left: Math.round(rect.left), top: Math.round(rect.top) }; state.fabDragged = true; save(); }
   };
-  fab.addEventListener('pointerup', finish); fab.addEventListener('pointercancel', finish);
+  fab.addEventListener('pointerdown', event => {
+    if (event.button != null && event.button !== 0) return;
+    const rect = fab.getBoundingClientRect(); startX = event.clientX; startY = event.clientY; left = rect.left; top = rect.top; dragging = false; activeId = event.pointerId;
+    fab.classList.add('sf-grabbing');
+  });
+  window.addEventListener('pointermove', move, { passive: true });
+  window.addEventListener('pointerup', finish, { passive: true });
+  window.addEventListener('pointercancel', finish, { passive: true });
 }
 function render() {
   document.querySelector('#scene-frame-root')?.remove();
