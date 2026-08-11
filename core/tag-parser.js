@@ -22,7 +22,7 @@ export function extractByRules(text = '', rules = DEFAULT_IMAGE_RULES) {
       let match; let guard = 0;
       while ((match = regex.exec(input)) && guard++ < 30) {
         const raw = String(match[1] ?? '').trim(); const key = `${match.index}:${raw}`;
-        if (raw && !used.has(key)) { used.add(key); blocks.push({ raw, index: blocks.length, offset: match.index, ruleId: rule.id, ruleName: rule.name }); }
+        if (raw && !used.has(key)) { used.add(key); blocks.push({ raw, matched: match[0], index: blocks.length, offset: match.index, ruleId: rule.id, ruleName: rule.name }); }
         if (match[0] === '') regex.lastIndex++;
       }
     } catch (error) { console.debug('[SceneFrame] invalid parser rule', rule.name, error); }
