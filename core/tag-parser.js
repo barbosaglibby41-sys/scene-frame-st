@@ -1,6 +1,6 @@
 export function extractImageBlocks(text = '') {
   const blocks = [];
-  const re = /<image(?:\\s+[^>]*)?>([\\s\\S]*?)<\\/image>/gi;
+  const re = /<image(?:\s+[^>]*)?>([\s\S]*?)<\/image>/gi;
   let match;
   while ((match = re.exec(String(text)))) {
     const raw = match[1].trim();
