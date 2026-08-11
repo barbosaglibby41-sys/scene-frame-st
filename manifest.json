@@ -1,0 +1,10 @@
+{
+  "display_name": "SceneFrame 镜匣",
+  "loading_order": 120,
+  "requires": [],
+  "js": "index.js",
+  "css": "styles/main.css",
+  "author": "SceneFrame Project",
+  "version": "0.1.0",
+  "homePage": "https://github.com/barbosaglibby41-sys/scene-frame-st"
+}
