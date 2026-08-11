@@ -9,7 +9,7 @@ import { hasBlock, rememberBlock } from './core/message-store.js';
 
 const KEY = 'scene_frame_settings';
 const defaults = { enabled: true, autoGenerate: false, backend: 'sd', naiKey: '', naiUrl: 'https://image.novelai.net', sdUrl: 'http://127.0.0.1:7860', negative: '', width: 768, height: 1024, steps: 28 };
-const state = { settings: { ...defaults }, seen: new Set(), current: null, pending: [], tasks: [] };
+const state = { settings: { ...defaults }, seen: new Set(), current: null, pending: [], tasks: [], fabDragged: false };
 try { Object.assign(state.settings, JSON.parse(localStorage.getItem(KEY) || '{}')); } catch {}
 function save() { localStorage.setItem(KEY, JSON.stringify(state.settings)); }
 function val(sel) { return document.querySelector(sel)?.value ?? ''; }
@@ -40,16 +40,48 @@ function renderPending() {
   });
 }
 function escapeHtml(value) { return String(value).replace(/[&<>"']/g, ch => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[ch])); }
+function clamp(value, min, max) { return Math.max(min, Math.min(max, value)); }
+function placeFab(fab) {
+  const pos = state.settings.fabPosition;
+  if (pos && Number.isFinite(pos.left) && Number.isFinite(pos.top)) {
+    fab.style.left = `${clamp(pos.left, 8, innerWidth - 58)}px`;
+    fab.style.top = `${clamp(pos.top, 8, innerHeight - 58)}px`;
+    fab.style.right = 'auto'; fab.style.bottom = 'auto';
+  }
+}
+function makeFabDraggable(fab) {
+  let startX = 0, startY = 0, left = 0, top = 0, dragging = false;
+  fab.addEventListener('pointerdown', event => {
+    if (event.button != null && event.button !== 0) return;
+    const rect = fab.getBoundingClientRect(); startX = event.clientX; startY = event.clientY; left = rect.left; top = rect.top; dragging = false;
+    fab.setPointerCapture?.(event.pointerId); fab.classList.add('sf-grabbing');
+  });
+  fab.addEventListener('pointermove', event => {
+    if (!fab.hasPointerCapture?.(event.pointerId)) return;
+    const dx = event.clientX - startX, dy = event.clientY - startY;
+    if (Math.abs(dx) + Math.abs(dy) > 6) dragging = true;
+    if (!dragging) return;
+    const x = clamp(left + dx, 8, innerWidth - fab.offsetWidth - 8), y = clamp(top + dy, 8, innerHeight - fab.offsetHeight - 8);
+    fab.style.left = `${x}px`; fab.style.top = `${y}px`; fab.style.right = 'auto'; fab.style.bottom = 'auto';
+  });
+  const finish = event => {
+    if (!fab.hasPointerCapture?.(event.pointerId)) return;
+    fab.releasePointerCapture?.(event.pointerId); fab.classList.remove('sf-grabbing');
+    if (dragging) { const rect = fab.getBoundingClientRect(); state.settings.fabPosition = { left: Math.round(rect.left), top: Math.round(rect.top) }; state.fabDragged = true; save(); }
+  };
+  fab.addEventListener('pointerup', finish); fab.addEventListener('pointercancel', finish);
+}
 function render() {
   document.querySelector('#scene-frame-root')?.remove();
   const root = document.createElement('div'); root.id = 'scene-frame-root';
   root.innerHTML = `<button class="sf-fab" title="SceneFrame">🖼️</button><section class="sf-sheet sf-hidden"><div class="sf-title"><b>镜匣 SceneFrame</b><button data-act="close" aria-label="关闭">×</button></div><div class="sf-row"><select id="sf-backend" class="sf-input"><option value="sd">A1111 / Forge</option><option value="nai">NovelAI</option></select><button data-act="toggle">自动：${state.settings.autoGenerate ? '开' : '关'}</button></div><div class="sf-section-title">检测到的图片块</div><div id="sf-detected"></div><div class="sf-section-title">Prompt 编辑</div><input id="sf-url" class="sf-input" placeholder="后端地址"><input id="sf-key" class="sf-input" type="password" placeholder="NovelAI API Key（仅本地）"><textarea id="sf-prompt" class="sf-textarea" placeholder="手动输入或粘贴 prompt"></textarea><input id="sf-negative" class="sf-input" placeholder="负面提示词"><div class="sf-row"><button data-act="generate">生成</button><button data-act="clear">清空</button></div><div id="sf-status" class="sf-status">v0.1.0 · 手动确认模式</div></section>`;
   document.body.append(root);
   const sheet = root.querySelector('.sf-sheet');
+  const fab = root.querySelector('.sf-fab'); placeFab(fab); makeFabDraggable(fab);
   root.querySelector('#sf-backend').value = state.settings.backend;
   root.querySelector('#sf-url').value = state.settings.backend === 'nai' ? state.settings.naiUrl : state.settings.sdUrl;
   root.querySelector('#sf-negative').value = state.settings.negative;
-  root.querySelector('.sf-fab').onclick = () => { sheet.classList.toggle('sf-hidden'); renderPending(); };
+  fab.onclick = () => { if (state.fabDragged) { state.fabDragged = false; return; } sheet.classList.toggle('sf-hidden'); renderPending(); };
   root.querySelector('[data-act=close]').onclick = () => sheet.classList.add('sf-hidden');
   renderPending();
   root.querySelector('[data-act=toggle]').onclick = () => { state.settings.autoGenerate = !state.settings.autoGenerate; save(); render(); };
