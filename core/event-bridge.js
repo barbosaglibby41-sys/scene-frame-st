@@ -1,4 +1,4 @@
-const EVENT_NAMES = ['MESSAGE_RECEIVED', 'MESSAGE_UPDATED', 'MESSAGE_SWIPED'];
+const EVENT_NAMES = ['MESSAGE_RECEIVED', 'MESSAGE_UPDATED', 'MESSAGE_EDITED', 'MESSAGE_SWIPED', 'GENERATION_ENDED', 'STREAM_TOKEN_RECEIVED'];
 
 export function getTavernContext() {
   try { return window.SillyTavern?.getContext?.() || window.getContext?.() || null; } catch { return null; }
