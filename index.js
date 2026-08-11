@@ -167,14 +167,46 @@ function findMessageElement(messageId) {
 }
 function messageTextRoot(messageId) {
   const root = findMessageElement(messageId);
-  if (!root) return null;
-  return root.querySelector(".mes_text, .message_text, .mes_content") || root;
+  return root?.querySelector(".mes_text, .message_text, .mes_content") || root || null;
 }
-function cardMarkup(item) {
-  const status = item.status || "pending";
-  const label = status === "generating" ? "\u6B63\u5728\u751F\u6210\u2026" : status === "queued" ? "\u5DF2\u52A0\u5165\u961F\u5217\u2026" : status === "failed" ? "\u91CD\u65B0\u751F\u6210\u56FE\u7247" : status === "completed" ? "\u56FE\u7247\u5DF2\u751F\u6210" : "\u751F\u6210\u56FE\u7247";
-  const disabled = ["generating", "queued", "completed"].includes(status);
-  return `<button class="sf-inline-generate ${status === "generating" || status === "queued" ? "sf-loading" : ""} ${status === "failed" ? "sf-generate-failed" : ""}" ${disabled ? "disabled" : ""} title="\u957F\u6309\u67E5\u770B\u539F\u59CB Tag">${status === "generating" || status === "queued" ? '<span class="sf-spinner"></span>' : "\u{1F5BC}\uFE0F"} ${label}</button>${status === "failed" ? `<span class="sf-inline-error" title="${esc(item.error || "\u8BF7\u68C0\u67E5 API \u8BBE\u7F6E")}">!</span>` : ""}`;
+function collectLogicalText(root) {
+  const infos = [], walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, { acceptNode(node2) {
+    if (node2.nodeType === Node.ELEMENT_NODE) return node2.tagName === "BR" ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
+    const parent = node2.parentElement;
+    if (!node2.nodeValue || parent?.closest(".sf-inline-action, button, script, style")) return NodeFilter.FILTER_REJECT;
+    return NodeFilter.FILTER_ACCEPT;
+  } });
+  let text = "", node;
+  while (node = walker.nextNode()) {
+    const start = text.length, value = node.nodeType === Node.TEXT_NODE ? node.nodeValue : "\n";
+    text += value;
+    infos.push({ node, start, end: text.length, value });
+  }
+  return { text, infos };
+}
+function boundaryAt(infos, position, isEnd = false) {
+  for (const info of infos) if (position >= info.start && position <= info.end) {
+    if (info.node.nodeType === Node.TEXT_NODE) return { node: info.node, offset: Math.max(0, Math.min(info.node.nodeValue.length, position - info.start)) };
+    const parent = info.node.parentNode, index = [...parent.childNodes].indexOf(info.node);
+    return { node: parent, offset: index + (isEnd ? 1 : 0) };
+  }
+  return null;
+}
+function findMatchRange(root, matched) {
+  const { text, infos } = collectLogicalText(root);
+  const wanted = String(matched || "");
+  let start = text.indexOf(wanted);
+  if (start < 0) {
+    const marker = wanted.match(/^(.*?)(?:[\r\n]|$)/)?.[1]?.trim() || "";
+    if (marker) start = text.indexOf(marker);
+    if (start >= 0) {
+      const endMarker = wanted.slice(wanted.lastIndexOf("###"));
+      const end = endMarker ? text.indexOf(endMarker, start + marker.length) : -1;
+      if (end >= 0) return { start, end: end + endMarker.length, infos };
+    }
+    return null;
+  }
+  return { start, end: start + wanted.length, infos };
 }
 function openTagPreview(item) {
   document.querySelector("#sf-tag-preview-modal")?.remove();
@@ -198,20 +230,28 @@ function openTagPreview(item) {
   });
   document.body.append(modal);
 }
-function bindCard(card, item, onGenerate) {
-  const generate2 = card.querySelector(".sf-inline-generate");
-  let pressTimer = null, longPressed = false;
-  generate2?.addEventListener("pointerdown", () => {
+function updateButton(button, item) {
+  const status = item.status || "pending";
+  const loading = status === "generating" || status === "queued";
+  const failed = status === "failed";
+  const label = status === "generating" ? "\u751F\u6210\u4E2D\u2026" : status === "queued" ? "\u6392\u961F\u4E2D\u2026" : failed ? "\u91CD\u65B0\u751F\u6210\u56FE\u7247" : status === "completed" ? "\u56FE\u7247\u5DF2\u751F\u6210" : "\u751F\u6210\u56FE\u7247";
+  button.disabled = loading || status === "completed";
+  button.classList.toggle("sf-loading", loading);
+  button.classList.toggle("sf-generate-failed", failed);
+  button.innerHTML = `${loading ? '<span class="sf-spinner"></span>' : "\u{1F5BC}\uFE0F"} ${label}`;
+  button.title = failed ? `\u751F\u6210\u5931\u8D25\uFF1A${item.error || "\u672A\u77E5\u9519\u8BEF"}\uFF1B\u957F\u6309\u67E5\u770B\u539F\u59CB Tag` : "\u957F\u6309\u67E5\u770B\u539F\u59CB Tag";
+}
+function bindButton(button, item, onGenerate) {
+  let timer = null, longPressed = false;
+  button.addEventListener("pointerdown", () => {
     longPressed = false;
-    pressTimer = setTimeout(() => {
+    timer = setTimeout(() => {
       longPressed = true;
       openTagPreview(item);
     }, 550);
   });
-  for (const event of ["pointerup", "pointercancel", "pointerleave"]) generate2?.addEventListener(event, () => {
-    clearTimeout(pressTimer);
-  });
-  generate2?.addEventListener("click", (event) => {
+  for (const event of ["pointerup", "pointercancel", "pointerleave"]) button.addEventListener(event, () => clearTimeout(timer));
+  button.addEventListener("click", (event) => {
     if (longPressed) {
       event.preventDefault();
       event.stopImmediatePropagation();
@@ -220,44 +260,37 @@ function bindCard(card, item, onGenerate) {
     onGenerate?.(item);
   });
 }
-function renderGenerateAction({ messageId, item, onGenerate, onDismiss }) {
+function renderGenerateAction({ messageId, item, onGenerate }) {
   const root = messageTextRoot(messageId);
   if (!root) return false;
   const id = String(item.id);
-  let card = root.querySelector(`.sf-inline-action[data-sf-id="${esc(id)}"]`);
-  if (!card) {
-    const wanted = String(item.matched || "");
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-    let node;
-    while (node = walker.nextNode()) {
-      const at = node.nodeValue.indexOf(wanted);
-      if (at < 0) continue;
-      const before = node.nodeValue.slice(0, at), after = node.nodeValue.slice(at + wanted.length);
-      card = document.createElement("span");
-      card.className = "sf-inline-action";
-      card.dataset.sfId = id;
-      node.parentNode.insertBefore(document.createTextNode(before), node);
-      node.parentNode.insertBefore(card, node);
-      node.parentNode.insertBefore(document.createTextNode(after), node);
-      node.remove();
-      break;
+  let button = root.querySelector(`button.sf-inline-action[data-sf-id="${esc(id)}"]`);
+  if (!button) {
+    const hit = findMatchRange(root, item.matched);
+    if (!hit) return false;
+    const start = boundaryAt(hit.infos, hit.start), end = boundaryAt(hit.infos, hit.end, true);
+    if (!start || !end) return false;
+    const range = document.createRange();
+    try {
+      range.setStart(start.node, start.offset);
+      range.setEnd(end.node, end.offset);
+      button = document.createElement("button");
+      button.type = "button";
+      button.className = "image-tag-button st-chatu8-image-button sf-inline-action";
+      button.dataset.sfId = id;
+      range.deleteContents();
+      range.insertNode(button);
+    } catch {
+      return false;
     }
-    if (!card) return false;
+    bindButton(button, item, onGenerate);
   }
-  card.innerHTML = cardMarkup(item);
-  bindCard(card, item, onGenerate);
+  updateButton(button, item);
   return true;
 }
 function insertImageBelowMessage({ messageId, blob, prompt }) {
-  const target = findMessageElement(messageId);
-  const url = URL.createObjectURL(blob);
+  const target = findMessageElement(messageId), url = URL.createObjectURL(blob);
   if (!target) return { inserted: false, url };
-  const box = target.querySelector?.(".sf-image-list") || (() => {
-    const x = document.createElement("div");
-    x.className = "sf-image-list";
-    target.append(x);
-    return x;
-  })();
   const figure = document.createElement("figure");
   figure.className = "sf-image-item";
   const img = document.createElement("img");
@@ -268,7 +301,7 @@ function insertImageBelowMessage({ messageId, blob, prompt }) {
   figure.append(img);
   const action = target.querySelector(".sf-inline-action");
   if (action) action.insertAdjacentElement("afterend", figure);
-  else box.append(figure);
+  else target.append(figure);
   return { inserted: true, url };
 }
 
@@ -697,7 +730,7 @@ function render() {
   document.querySelector("#scene-frame-root")?.remove();
   const root = document.createElement("div");
   root.id = "scene-frame-root";
-  root.innerHTML = `<button class="sf-fab" title="SceneFrame">\u{1F5BC}\uFE0F</button><section class="sf-sheet ${state.panelOpen ? "" : "sf-hidden"}"><div class="sf-title"><b>\u955C\u5323 SceneFrame</b><button data-act="close" aria-label="\u5173\u95ED">\xD7</button></div><div class="sf-row"><select id="sf-backend" class="sf-input"><option value="sd">A1111 / Forge</option><option value="nai">NovelAI</option></select><button data-act="toggle">\u81EA\u52A8\uFF1A${state.settings.autoGenerate ? "\u5F00" : "\u5173"}</button></div><div class="sf-section-title">\u63D0\u793A\u8BCD\u65B9\u6848 \xB7 \u4EC5\u4FDD\u5B58\u524D\u7F6E / \u8D1F\u9762\u8BCD</div><div class="sf-row"><select id="sf-preset" class="sf-input"><option value="">\u672A\u9009\u62E9\u65B9\u6848</option></select><button data-act="save-preset">\u53E6\u5B58\u65B9\u6848</button><button data-act="delete-preset">\u5220\u9664</button></div><input id="sf-preset-name" class="sf-input" placeholder="\u65B9\u6848\u540D\u79F0\uFF0C\u4F8B\u5982 NAI\xB7\u6C34\u5F69\u753B\u5E08\u4E32"><div class="sf-section-title">\u524D\u7F6E\u63D0\u793A\u8BCD \xB7 \u753B\u5E08\u4E32 / \u56FA\u5B9A\u753B\u98CE</div><textarea id="sf-prefix" class="sf-textarea sf-short" placeholder="\u4F8B\u5982\uFF1Aartist:xxx, artist:yyy, watercolor, anime coloring"></textarea><div class="sf-section-title">\u8D1F\u9762\u63D0\u793A\u8BCD \xB7 \u8DDF\u968F\u65B9\u6848\u4FDD\u5B58</div><textarea id="sf-negative" class="sf-textarea sf-short" placeholder="\u4F8B\u5982\uFF1Alowres, bad anatomy, bad hands, text"></textarea><nav class="sf-tabs"><button data-page="generate" class="${state.page === "generate" ? "sf-tab-active" : ""}">\u751F\u56FE</button><button data-page="danbooru" class="${state.page === "danbooru" ? "sf-tab-active" : ""}">\u6807\u7B7E\u5E93</button><button data-page="parser" class="${state.page === "parser" ? "sf-tab-active" : ""}">\u89E3\u6790\u89C4\u5219</button></nav><section class="sf-page ${state.page === "generate" ? "" : "sf-hidden"}" data-page-content="generate"><div class="sf-section-title">\u68C0\u6D4B\u5230\u7684\u56FE\u7247\u5757</div><div id="sf-detected"></div><div class="sf-section-title">\u52A8\u6001\u56FE\u7247\u63D0\u793A\u8BCD \xB7 \u6765\u81EA &lt;image&gt; \u6807\u7B7E</div><input id="sf-url" class="sf-input" placeholder="\u540E\u7AEF\u5730\u5740"><input id="sf-key" class="sf-input" type="password" placeholder="NovelAI API Key\uFF08\u4EC5\u672C\u5730\uFF09"><details class="sf-params" id="sf-nai-params"><summary>NovelAI \u53C2\u6570\u8BBE\u7F6E</summary><div class="sf-param-grid"><label>\u6A21\u578B<select id="sf-nai-model" class="sf-input"><option value="nai-diffusion-4-5-full">NAI Diffusion 4.5 Full</option><option value="nai-diffusion-4-5-curated-preview">NAI Diffusion 4.5 Curated</option><option value="nai-diffusion-4-curated-preview">NAI Diffusion 4 Curated</option></select></label><label>\u91C7\u6837\u5668<select id="sf-nai-sampler" class="sf-input"><option value="k_euler">Euler</option><option value="k_euler_ancestral">Euler Ancestral</option><option value="k_dpmpp_2m">DPM++ 2M</option><option value="k_dpmpp_2m_sde">DPM++ 2M SDE</option><option value="k_dpmpp_sde">DPM++ SDE</option><option value="k_lms">LMS</option></select></label><label>\u5BBD\u5EA6<input id="sf-nai-width" class="sf-input" type="number" min="64" step="64"></label><label>\u9AD8\u5EA6<input id="sf-nai-height" class="sf-input" type="number" min="64" step="64"></label><label>\u6B65\u6570<input id="sf-nai-steps" class="sf-input" type="number" min="1" max="50"></label><label>CFG / Scale<input id="sf-nai-scale" class="sf-input" type="number" min="0" max="20" step="0.1"></label><label>Seed\uFF08-1 \u968F\u673A\uFF09<input id="sf-nai-seed" class="sf-input" type="number" step="1"></label><label>\u51FA\u56FE\u6570<input id="sf-nai-samples" class="sf-input" type="number" min="1" max="4"></label><label>UC \u9884\u8BBE<select id="sf-nai-ucpreset" class="sf-input"><option value="0">0 \xB7 \u65E0</option><option value="1">1 \xB7 Light</option><option value="2">2 \xB7 Heavy</option><option value="3">3 \xB7 Human Focus</option></select></label><label class="sf-check"><input id="sf-nai-quality" type="checkbox"> \u542F\u7528 Quality Toggle</label><label class="sf-check"><input id="sf-nai-smea" type="checkbox"> \u542F\u7528 SMEA</label><label class="sf-check"><input id="sf-nai-smeadyn" type="checkbox"> \u542F\u7528 SMEA Dynamic</label></div></details><textarea id="sf-prompt" class="sf-textarea" placeholder="AI \u56FE\u7247\u5757\u6216\u624B\u52A8\u8F93\u5165\u7684\u573A\u666F prompt"></textarea><div class="sf-row"><button data-act="generate">\u751F\u6210</button><button data-act="clear">\u6E05\u7A7A\u573A\u666F</button></div></section><section class="sf-page ${state.page === "danbooru" ? "" : "sf-hidden"}" data-page-content="danbooru"><div class="sf-section-title">Danbooru \u6807\u7B7E\u5E93 \xB7 \u8D26\u6237\u914D\u7F6E</div><p class="sf-help">\u8F93\u5165\u8D26\u6237\u548C API Key \u540E\uFF0C\u53EF\u641C\u7D22\u5B98\u65B9\u6807\u7B7E\uFF1B\u70B9\u51FB\u6807\u7B7E\u4F1A\u52A0\u5165\u751F\u56FE\u9875\u7684\u52A8\u6001\u63D0\u793A\u8BCD\u3002</p><input id="sf-danbooru-login" class="sf-input" placeholder="Danbooru \u8D26\u6237\u540D"><input id="sf-danbooru-key" class="sf-input" type="password" placeholder="Danbooru API Key\uFF08\u4EC5\u672C\u5730\u4FDD\u5B58\uFF09"><div class="sf-section-title">\u641C\u7D22\u6807\u7B7E</div><div class="sf-row"><input id="sf-danbooru-query" class="sf-input" placeholder="\u82F1\u6587 tag\uFF0C\u4F8B\u5982 blue_hair"><button data-act="search-danbooru">\u641C\u7D22</button></div><div id="sf-danbooru-results" class="sf-tag-results"></div></section><section class="sf-page ${state.page === "parser" ? "" : "sf-hidden"}" data-page-content="parser"><div class="sf-section-title">\u5185\u5BB9\u89E3\u6790 \xB7 \u56FE\u7247\u5757\u89C4\u5219</div><p class="sf-help">\u8BBE\u7F6E AI \u56DE\u590D\u4E2D\u7684\u5F00\u59CB\u4E0E\u7ED3\u675F\u6807\u8BB0\u3002\u53EA\u6709\u6807\u8BB0\u4E4B\u95F4\u7684\u5185\u5BB9\u4F1A\u4F5C\u4E3A\u52A8\u6001\u56FE\u7247\u63D0\u793A\u8BCD\uFF0C\u4E0D\u4F1A\u6539\u52A8\u6B63\u6587\u3002</p><div id="sf-parser-list"></div><details class="sf-params" open><summary>\u7F16\u8F91\u89C4\u5219</summary><input id="sf-rule-name" class="sf-input" placeholder="\u89C4\u5219\u540D\u79F0"><div class="sf-row"><select id="sf-rule-mode" class="sf-input"><option value="markers">\u5F00\u59CB / \u7ED3\u675F\u6807\u8BB0</option><option value="regex">\u9AD8\u7EA7\u6B63\u5219</option></select><label class="sf-check sf-inline-check"><input id="sf-rule-enabled" type="checkbox"> \u542F\u7528</label></div><div id="sf-rule-markers"><label class="sf-field-label">\u5F00\u59CB\u6807\u8BB0<input id="sf-rule-start" class="sf-input" placeholder="\u4F8B\u5982 image###"></label><label class="sf-field-label">\u7ED3\u675F\u6807\u8BB0<input id="sf-rule-end" class="sf-input" placeholder="\u4F8B\u5982 ###"></label></div><div id="sf-rule-regex" class="sf-hidden"><label class="sf-field-label">\u6B63\u5219\uFF08\u7B2C 1 \u4E2A\u6355\u83B7\u7EC4\u4E3A\u56FE\u7247\u63D0\u793A\u8BCD\uFF09<textarea id="sf-rule-pattern" class="sf-textarea sf-short" placeholder="\u4F8B\u5982 [image]([sS]*?)[/image]"></textarea></label><label class="sf-field-label">Flags<input id="sf-rule-flags" class="sf-input" placeholder="gi"></label></div><div class="sf-row"><button data-act="save-rule">\u4FDD\u5B58\u89C4\u5219</button><button data-act="new-rule">\u65B0\u5EFA\u89C4\u5219</button></div></details><div class="sf-section-title">\u89E3\u6790\u9884\u89C8</div><textarea id="sf-parser-preview" class="sf-textarea sf-short" placeholder="\u7C98\u8D34\u4E00\u6BB5 AI \u56DE\u590D\uFF0C\u67E5\u770B\u8BE5\u89C4\u5219\u80FD\u5426\u63D0\u53D6\u56FE\u7247\u5757"></textarea><div class="sf-row"><button data-act="test-rule">\u6D4B\u8BD5\u89E3\u6790</button><button data-act="scan-chat">\u626B\u63CF\u5F53\u524D\u804A\u5929</button></div><div id="sf-parser-result" class="sf-preview sf-parser-result">\u5C1A\u672A\u6D4B\u8BD5</div></section><div id="sf-status" class="sf-status">v0.2.8 \xB7 \u7D27\u51D1\u804A\u5929\u5185\u56FE\u7247\u751F\u6210\u6309\u94AE</div><button class="sf-save-all" data-act="save-all">\u4FDD\u5B58\u5168\u90E8\u8BBE\u7F6E</button></section>`;
+  root.innerHTML = `<button class="sf-fab" title="SceneFrame">\u{1F5BC}\uFE0F</button><section class="sf-sheet ${state.panelOpen ? "" : "sf-hidden"}"><div class="sf-title"><b>\u955C\u5323 SceneFrame</b><button data-act="close" aria-label="\u5173\u95ED">\xD7</button></div><div class="sf-row"><select id="sf-backend" class="sf-input"><option value="sd">A1111 / Forge</option><option value="nai">NovelAI</option></select><button data-act="toggle">\u81EA\u52A8\uFF1A${state.settings.autoGenerate ? "\u5F00" : "\u5173"}</button></div><div class="sf-section-title">\u63D0\u793A\u8BCD\u65B9\u6848 \xB7 \u4EC5\u4FDD\u5B58\u524D\u7F6E / \u8D1F\u9762\u8BCD</div><div class="sf-row"><select id="sf-preset" class="sf-input"><option value="">\u672A\u9009\u62E9\u65B9\u6848</option></select><button data-act="save-preset">\u53E6\u5B58\u65B9\u6848</button><button data-act="delete-preset">\u5220\u9664</button></div><input id="sf-preset-name" class="sf-input" placeholder="\u65B9\u6848\u540D\u79F0\uFF0C\u4F8B\u5982 NAI\xB7\u6C34\u5F69\u753B\u5E08\u4E32"><div class="sf-section-title">\u524D\u7F6E\u63D0\u793A\u8BCD \xB7 \u753B\u5E08\u4E32 / \u56FA\u5B9A\u753B\u98CE</div><textarea id="sf-prefix" class="sf-textarea sf-short" placeholder="\u4F8B\u5982\uFF1Aartist:xxx, artist:yyy, watercolor, anime coloring"></textarea><div class="sf-section-title">\u8D1F\u9762\u63D0\u793A\u8BCD \xB7 \u8DDF\u968F\u65B9\u6848\u4FDD\u5B58</div><textarea id="sf-negative" class="sf-textarea sf-short" placeholder="\u4F8B\u5982\uFF1Alowres, bad anatomy, bad hands, text"></textarea><nav class="sf-tabs"><button data-page="generate" class="${state.page === "generate" ? "sf-tab-active" : ""}">\u751F\u56FE</button><button data-page="danbooru" class="${state.page === "danbooru" ? "sf-tab-active" : ""}">\u6807\u7B7E\u5E93</button><button data-page="parser" class="${state.page === "parser" ? "sf-tab-active" : ""}">\u89E3\u6790\u89C4\u5219</button></nav><section class="sf-page ${state.page === "generate" ? "" : "sf-hidden"}" data-page-content="generate"><div class="sf-section-title">\u68C0\u6D4B\u5230\u7684\u56FE\u7247\u5757</div><div id="sf-detected"></div><div class="sf-section-title">\u52A8\u6001\u56FE\u7247\u63D0\u793A\u8BCD \xB7 \u6765\u81EA &lt;image&gt; \u6807\u7B7E</div><input id="sf-url" class="sf-input" placeholder="\u540E\u7AEF\u5730\u5740"><input id="sf-key" class="sf-input" type="password" placeholder="NovelAI API Key\uFF08\u4EC5\u672C\u5730\uFF09"><details class="sf-params" id="sf-nai-params"><summary>NovelAI \u53C2\u6570\u8BBE\u7F6E</summary><div class="sf-param-grid"><label>\u6A21\u578B<select id="sf-nai-model" class="sf-input"><option value="nai-diffusion-4-5-full">NAI Diffusion 4.5 Full</option><option value="nai-diffusion-4-5-curated-preview">NAI Diffusion 4.5 Curated</option><option value="nai-diffusion-4-curated-preview">NAI Diffusion 4 Curated</option></select></label><label>\u91C7\u6837\u5668<select id="sf-nai-sampler" class="sf-input"><option value="k_euler">Euler</option><option value="k_euler_ancestral">Euler Ancestral</option><option value="k_dpmpp_2m">DPM++ 2M</option><option value="k_dpmpp_2m_sde">DPM++ 2M SDE</option><option value="k_dpmpp_sde">DPM++ SDE</option><option value="k_lms">LMS</option></select></label><label>\u5BBD\u5EA6<input id="sf-nai-width" class="sf-input" type="number" min="64" step="64"></label><label>\u9AD8\u5EA6<input id="sf-nai-height" class="sf-input" type="number" min="64" step="64"></label><label>\u6B65\u6570<input id="sf-nai-steps" class="sf-input" type="number" min="1" max="50"></label><label>CFG / Scale<input id="sf-nai-scale" class="sf-input" type="number" min="0" max="20" step="0.1"></label><label>Seed\uFF08-1 \u968F\u673A\uFF09<input id="sf-nai-seed" class="sf-input" type="number" step="1"></label><label>\u51FA\u56FE\u6570<input id="sf-nai-samples" class="sf-input" type="number" min="1" max="4"></label><label>UC \u9884\u8BBE<select id="sf-nai-ucpreset" class="sf-input"><option value="0">0 \xB7 \u65E0</option><option value="1">1 \xB7 Light</option><option value="2">2 \xB7 Heavy</option><option value="3">3 \xB7 Human Focus</option></select></label><label class="sf-check"><input id="sf-nai-quality" type="checkbox"> \u542F\u7528 Quality Toggle</label><label class="sf-check"><input id="sf-nai-smea" type="checkbox"> \u542F\u7528 SMEA</label><label class="sf-check"><input id="sf-nai-smeadyn" type="checkbox"> \u542F\u7528 SMEA Dynamic</label></div></details><textarea id="sf-prompt" class="sf-textarea" placeholder="AI \u56FE\u7247\u5757\u6216\u624B\u52A8\u8F93\u5165\u7684\u573A\u666F prompt"></textarea><div class="sf-row"><button data-act="generate">\u751F\u6210</button><button data-act="clear">\u6E05\u7A7A\u573A\u666F</button></div></section><section class="sf-page ${state.page === "danbooru" ? "" : "sf-hidden"}" data-page-content="danbooru"><div class="sf-section-title">Danbooru \u6807\u7B7E\u5E93 \xB7 \u8D26\u6237\u914D\u7F6E</div><p class="sf-help">\u8F93\u5165\u8D26\u6237\u548C API Key \u540E\uFF0C\u53EF\u641C\u7D22\u5B98\u65B9\u6807\u7B7E\uFF1B\u70B9\u51FB\u6807\u7B7E\u4F1A\u52A0\u5165\u751F\u56FE\u9875\u7684\u52A8\u6001\u63D0\u793A\u8BCD\u3002</p><input id="sf-danbooru-login" class="sf-input" placeholder="Danbooru \u8D26\u6237\u540D"><input id="sf-danbooru-key" class="sf-input" type="password" placeholder="Danbooru API Key\uFF08\u4EC5\u672C\u5730\u4FDD\u5B58\uFF09"><div class="sf-section-title">\u641C\u7D22\u6807\u7B7E</div><div class="sf-row"><input id="sf-danbooru-query" class="sf-input" placeholder="\u82F1\u6587 tag\uFF0C\u4F8B\u5982 blue_hair"><button data-act="search-danbooru">\u641C\u7D22</button></div><div id="sf-danbooru-results" class="sf-tag-results"></div></section><section class="sf-page ${state.page === "parser" ? "" : "sf-hidden"}" data-page-content="parser"><div class="sf-section-title">\u5185\u5BB9\u89E3\u6790 \xB7 \u56FE\u7247\u5757\u89C4\u5219</div><p class="sf-help">\u8BBE\u7F6E AI \u56DE\u590D\u4E2D\u7684\u5F00\u59CB\u4E0E\u7ED3\u675F\u6807\u8BB0\u3002\u53EA\u6709\u6807\u8BB0\u4E4B\u95F4\u7684\u5185\u5BB9\u4F1A\u4F5C\u4E3A\u52A8\u6001\u56FE\u7247\u63D0\u793A\u8BCD\uFF0C\u4E0D\u4F1A\u6539\u52A8\u6B63\u6587\u3002</p><div id="sf-parser-list"></div><details class="sf-params" open><summary>\u7F16\u8F91\u89C4\u5219</summary><input id="sf-rule-name" class="sf-input" placeholder="\u89C4\u5219\u540D\u79F0"><div class="sf-row"><select id="sf-rule-mode" class="sf-input"><option value="markers">\u5F00\u59CB / \u7ED3\u675F\u6807\u8BB0</option><option value="regex">\u9AD8\u7EA7\u6B63\u5219</option></select><label class="sf-check sf-inline-check"><input id="sf-rule-enabled" type="checkbox"> \u542F\u7528</label></div><div id="sf-rule-markers"><label class="sf-field-label">\u5F00\u59CB\u6807\u8BB0<input id="sf-rule-start" class="sf-input" placeholder="\u4F8B\u5982 image###"></label><label class="sf-field-label">\u7ED3\u675F\u6807\u8BB0<input id="sf-rule-end" class="sf-input" placeholder="\u4F8B\u5982 ###"></label></div><div id="sf-rule-regex" class="sf-hidden"><label class="sf-field-label">\u6B63\u5219\uFF08\u7B2C 1 \u4E2A\u6355\u83B7\u7EC4\u4E3A\u56FE\u7247\u63D0\u793A\u8BCD\uFF09<textarea id="sf-rule-pattern" class="sf-textarea sf-short" placeholder="\u4F8B\u5982 [image]([sS]*?)[/image]"></textarea></label><label class="sf-field-label">Flags<input id="sf-rule-flags" class="sf-input" placeholder="gi"></label></div><div class="sf-row"><button data-act="save-rule">\u4FDD\u5B58\u89C4\u5219</button><button data-act="new-rule">\u65B0\u5EFA\u89C4\u5219</button></div></details><div class="sf-section-title">\u89E3\u6790\u9884\u89C8</div><textarea id="sf-parser-preview" class="sf-textarea sf-short" placeholder="\u7C98\u8D34\u4E00\u6BB5 AI \u56DE\u590D\uFF0C\u67E5\u770B\u8BE5\u89C4\u5219\u80FD\u5426\u63D0\u53D6\u56FE\u7247\u5757"></textarea><div class="sf-row"><button data-act="test-rule">\u6D4B\u8BD5\u89E3\u6790</button><button data-act="scan-chat">\u626B\u63CF\u5F53\u524D\u804A\u5929</button></div><div id="sf-parser-result" class="sf-preview sf-parser-result">\u5C1A\u672A\u6D4B\u8BD5</div></section><div id="sf-status" class="sf-status">v0.2.9 \xB7 \u8DE8\u884C\u6807\u7B7E\u539F\u4F4D\u66FF\u6362\u751F\u6210\u6309\u94AE</div><button class="sf-save-all" data-act="save-all">\u4FDD\u5B58\u5168\u90E8\u8BBE\u7F6E</button></section>`;
   document.body.append(root);
   const sheet = root.querySelector(".sf-sheet");
   const fab = root.querySelector(".sf-fab");
