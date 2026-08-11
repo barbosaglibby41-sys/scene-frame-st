@@ -10,7 +10,7 @@ import { hasBlock, rememberBlock } from './core/message-store.js';
 
 const KEY = 'scene_frame_settings';
 const defaults = { enabled: true, autoGenerate: false, backend: 'sd', naiKey: '', naiUrl: 'https://image.novelai.net', sdUrl: 'http://127.0.0.1:7860', danbooruLogin: '', danbooruKey: '', danbooruUrl: 'https://danbooru.donmai.us', positivePrefix: '', negative: '', presets: [], activePresetId: '', width: 768, height: 1024, steps: 28 };
-const state = { settings: { ...defaults }, seen: new Set(), current: null, pending: [], tasks: [], fabDragged: false };
+const state = { settings: { ...defaults }, seen: new Set(), current: null, pending: [], tasks: [], fabDragged: false, page: 'generate' };
 try { Object.assign(state.settings, JSON.parse(localStorage.getItem(KEY) || '{}')); } catch {}
 function save() { localStorage.setItem(KEY, JSON.stringify(state.settings)); }
 function val(sel) { return document.querySelector(sel)?.value ?? ''; }
@@ -105,7 +105,7 @@ function makeFabDraggable(fab) {
 function render() {
   document.querySelector('#scene-frame-root')?.remove();
   const root = document.createElement('div'); root.id = 'scene-frame-root';
-  root.innerHTML = `<button class="sf-fab" title="SceneFrame">🖼️</button><section class="sf-sheet sf-hidden"><div class="sf-title"><b>镜匣 SceneFrame</b><button data-act="close" aria-label="关闭">×</button></div><div class="sf-row"><select id="sf-backend" class="sf-input"><option value="sd">A1111 / Forge</option><option value="nai">NovelAI</option></select><button data-act="toggle">自动：${state.settings.autoGenerate ? '开' : '关'}</button></div><div class="sf-section-title">提示词方案</div><div class="sf-row"><select id="sf-preset" class="sf-input"><option value="">未选择方案</option></select><button data-act="save-preset">另存方案</button><button data-act="delete-preset">删除</button></div><input id="sf-preset-name" class="sf-input" placeholder="方案名称，例如 NAI·水彩画师串"><div class="sf-section-title">前置提示词 · 画师串 / 固定画风</div><textarea id="sf-prefix" class="sf-textarea sf-short" placeholder="例如：artist:xxx, artist:yyy, watercolor, anime coloring"></textarea><div class="sf-section-title">检测到的图片块</div><div id="sf-detected"></div><div class="sf-section-title">Danbooru 标签库</div><input id="sf-danbooru-login" class="sf-input" placeholder="Danbooru 账户名（可选，建议填写）"><input id="sf-danbooru-key" class="sf-input" type="password" placeholder="Danbooru API Key（仅本地保存）"><div class="sf-row"><input id="sf-danbooru-query" class="sf-input" placeholder="搜索英文 tag，例如 blue_hair"><button data-act="search-danbooru">搜索</button></div><div id="sf-danbooru-results" class="sf-tag-results"></div><div class="sf-section-title">动态图片提示词 · 来自 &lt;image&gt; 标签</div><input id="sf-url" class="sf-input" placeholder="后端地址"><input id="sf-key" class="sf-input" type="password" placeholder="NovelAI API Key（仅本地）"><textarea id="sf-prompt" class="sf-textarea" placeholder="AI 图片块或手动输入的场景 prompt"></textarea><div class="sf-section-title">负面提示词</div><textarea id="sf-negative" class="sf-textarea sf-short" placeholder="例如：lowres, bad anatomy, text"></textarea><div class="sf-row"><button data-act="generate">生成</button><button data-act="clear">清空场景</button></div><div id="sf-status" class="sf-status">v0.1.1 · 提示词方案 / 手动确认模式</div></section>`;
+  root.innerHTML = `<button class="sf-fab" title="SceneFrame">🖼️</button><section class="sf-sheet sf-hidden"><div class="sf-title"><b>镜匣 SceneFrame</b><button data-act="close" aria-label="关闭">×</button></div><div class="sf-row"><select id="sf-backend" class="sf-input"><option value="sd">A1111 / Forge</option><option value="nai">NovelAI</option></select><button data-act="toggle">自动：${state.settings.autoGenerate ? '开' : '关'}</button></div><div class="sf-section-title">提示词方案</div><div class="sf-row"><select id="sf-preset" class="sf-input"><option value="">未选择方案</option></select><button data-act="save-preset">另存方案</button><button data-act="delete-preset">删除</button></div><input id="sf-preset-name" class="sf-input" placeholder="方案名称，例如 NAI·水彩画师串"><div class="sf-section-title">前置提示词 · 画师串 / 固定画风</div><textarea id="sf-prefix" class="sf-textarea sf-short" placeholder="例如：artist:xxx, artist:yyy, watercolor, anime coloring"></textarea><nav class="sf-tabs"><button data-page="generate" class="${state.page === 'generate' ? 'sf-tab-active' : ''}">生图</button><button data-page="danbooru" class="${state.page === 'danbooru' ? 'sf-tab-active' : ''}">标签库</button></nav><section class="sf-page ${state.page === 'generate' ? '' : 'sf-hidden'}" data-page-content="generate"><div class="sf-section-title">检测到的图片块</div><div id="sf-detected"></div><div class="sf-section-title">动态图片提示词 · 来自 &lt;image&gt; 标签</div><input id="sf-url" class="sf-input" placeholder="后端地址"><input id="sf-key" class="sf-input" type="password" placeholder="NovelAI API Key（仅本地）"><textarea id="sf-prompt" class="sf-textarea" placeholder="AI 图片块或手动输入的场景 prompt"></textarea><div class="sf-section-title">负面提示词</div><textarea id="sf-negative" class="sf-textarea sf-short" placeholder="例如：lowres, bad anatomy, text"></textarea><div class="sf-row"><button data-act="generate">生成</button><button data-act="clear">清空场景</button></div></section><section class="sf-page ${state.page === 'danbooru' ? '' : 'sf-hidden'}" data-page-content="danbooru"><div class="sf-section-title">Danbooru 标签库 · 账户配置</div><p class="sf-help">输入账户和 API Key 后，可搜索官方标签；点击标签会加入生图页的动态提示词。</p><input id="sf-danbooru-login" class="sf-input" placeholder="Danbooru 账户名"><input id="sf-danbooru-key" class="sf-input" type="password" placeholder="Danbooru API Key（仅本地保存）"><div class="sf-section-title">搜索标签</div><div class="sf-row"><input id="sf-danbooru-query" class="sf-input" placeholder="英文 tag，例如 blue_hair"><button data-act="search-danbooru">搜索</button></div><div id="sf-danbooru-results" class="sf-tag-results"></div></section><div id="sf-status" class="sf-status">v0.1.2 · Danbooru 标签库 / 手动确认模式</div></section>`;
   document.body.append(root);
   const sheet = root.querySelector('.sf-sheet');
   const fab = root.querySelector('.sf-fab'); placeFab(fab); makeFabDraggable(fab);
@@ -113,8 +113,8 @@ function render() {
   root.querySelector('#sf-url').value = state.settings.backend === 'nai' ? state.settings.naiUrl : state.settings.sdUrl;
   root.querySelector('#sf-prefix').value = state.settings.positivePrefix;
   root.querySelector('#sf-negative').value = state.settings.negative;
-  root.querySelector('#sf-danbooru-login').value = state.settings.danbooruLogin;
-  renderDanbooruResults();
+  const danbooruLogin = root.querySelector('#sf-danbooru-login');
+  if (danbooruLogin) { danbooruLogin.value = state.settings.danbooruLogin; renderDanbooruResults(); }
   const presetSelect = root.querySelector('#sf-preset');
   presetSelect.insertAdjacentHTML('beforeend', (state.settings.presets || []).map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>`).join(''));
   presetSelect.value = state.settings.activePresetId || '';
@@ -127,10 +127,11 @@ function render() {
   root.querySelector('#sf-key').onchange = e => { state.settings.naiKey = e.target.value; save(); };
   root.querySelector('#sf-prefix').onchange = e => { state.settings.positivePrefix = e.target.value; state.settings.activePresetId = ''; save(); };
   root.querySelector('#sf-negative').onchange = e => { state.settings.negative = e.target.value; state.settings.activePresetId = ''; save(); };
-  root.querySelector('#sf-danbooru-login').onchange = e => { state.settings.danbooruLogin = e.target.value.trim(); save(); };
-  root.querySelector('#sf-danbooru-key').onchange = e => { state.settings.danbooruKey = e.target.value.trim(); save(); };
-  root.querySelector('[data-act=search-danbooru]').onclick = runDanbooruSearch;
-  root.querySelector('#sf-danbooru-query').onkeydown = event => { if (event.key === 'Enter') { event.preventDefault(); runDanbooruSearch(); } };
+  root.querySelectorAll('[data-page]').forEach(button => button.onclick = () => { state.page = button.dataset.page; render(); });
+  root.querySelector('#sf-danbooru-login')?.addEventListener('change', e => { state.settings.danbooruLogin = e.target.value.trim(); save(); });
+  root.querySelector('#sf-danbooru-key')?.addEventListener('change', e => { state.settings.danbooruKey = e.target.value.trim(); save(); });
+  root.querySelector('[data-act=search-danbooru]')?.addEventListener('click', runDanbooruSearch);
+  root.querySelector('#sf-danbooru-query')?.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); runDanbooruSearch(); } });
   presetSelect.onchange = e => { if (!e.target.value) return; applyPreset(e.target.value); render(); setStatus('已切换提示词方案'); };
   root.querySelector('[data-act=save-preset]').onclick = () => {
     const name = val('#sf-preset-name').trim(); if (!name) return setStatus('请先填写方案名称');
