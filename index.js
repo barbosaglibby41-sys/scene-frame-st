@@ -8,21 +8,30 @@ import { subscribeToMessages } from './core/event-bridge.js';
 import { hasBlock, rememberBlock } from './core/message-store.js';
 
 const KEY = 'scene_frame_settings';
-const defaults = { enabled: true, autoGenerate: false, backend: 'sd', naiKey: '', naiUrl: 'https://image.novelai.net', sdUrl: 'http://127.0.0.1:7860', negative: '', width: 768, height: 1024, steps: 28 };
+const defaults = { enabled: true, autoGenerate: false, backend: 'sd', naiKey: '', naiUrl: 'https://image.novelai.net', sdUrl: 'http://127.0.0.1:7860', positivePrefix: '', negative: '', presets: [], activePresetId: '', width: 768, height: 1024, steps: 28 };
 const state = { settings: { ...defaults }, seen: new Set(), current: null, pending: [], tasks: [], fabDragged: false };
 try { Object.assign(state.settings, JSON.parse(localStorage.getItem(KEY) || '{}')); } catch {}
 function save() { localStorage.setItem(KEY, JSON.stringify(state.settings)); }
 function val(sel) { return document.querySelector(sel)?.value ?? ''; }
 function setStatus(text) { const el = document.querySelector('#sf-status'); if (el) el.textContent = text; }
+function composePrompt(scenePrompt = '') { return normalizePrompt([state.settings.positivePrefix, scenePrompt].filter(Boolean).join(', ')); }
+function presetById(id) { return (state.settings.presets || []).find(x => x.id === id) || null; }
+function applyPreset(id) {
+  const preset = presetById(id); if (!preset) return;
+  state.settings.positivePrefix = preset.positivePrefix || '';
+  state.settings.negative = preset.negative || '';
+  state.settings.backend = preset.backend || state.settings.backend;
+  state.settings.activePresetId = preset.id; save();
+}
 
 async function generate(item) {
-  const s = state.settings;
+  const s = state.settings, fullPrompt = composePrompt(item.prompt);
   setStatus(`⏳ 正在使用 ${s.backend === 'nai' ? 'NovelAI' : 'A1111/Forge'} 生成…`);
   const result = s.backend === 'nai'
-    ? await generateNAI({ apiKey: s.naiKey, baseUrl: s.naiUrl, prompt: item.prompt, negativePrompt: s.negative, width: Number(s.width), height: Number(s.height), steps: Number(s.steps) })
-    : await generateSD({ baseUrl: s.sdUrl, prompt: item.prompt, negativePrompt: s.negative, width: Number(s.width), height: Number(s.height), steps: Number(s.steps) });
-  await putImage({ id: item.id, messageId: item.messageId ?? null, prompt: item.prompt, blob: result.blob, createdAt: Date.now(), backend: result.backend });
-  const inserted = item.messageId == null ? false : insertImageBelowMessage({ messageId: item.messageId, blob: result.blob, prompt: item.prompt }).inserted;
+    ? await generateNAI({ apiKey: s.naiKey, baseUrl: s.naiUrl, prompt: fullPrompt, negativePrompt: s.negative, width: Number(s.width), height: Number(s.height), steps: Number(s.steps) })
+    : await generateSD({ baseUrl: s.sdUrl, prompt: fullPrompt, negativePrompt: s.negative, width: Number(s.width), height: Number(s.height), steps: Number(s.steps) });
+  await putImage({ id: item.id, messageId: item.messageId ?? null, prompt: fullPrompt, blob: result.blob, createdAt: Date.now(), backend: result.backend });
+  const inserted = item.messageId == null ? false : insertImageBelowMessage({ messageId: item.messageId, blob: result.blob, prompt: fullPrompt }).inserted;
   state.pending = state.pending.filter(x => x.id !== item.id);
   setStatus(`✅ 生成完成${inserted ? '，已尝试插入消息' : ''}`); renderPending();
   return result;
@@ -76,13 +85,17 @@ function makeFabDraggable(fab) {
 function render() {
   document.querySelector('#scene-frame-root')?.remove();
   const root = document.createElement('div'); root.id = 'scene-frame-root';
-  root.innerHTML = `<button class="sf-fab" title="SceneFrame">🖼️</button><section class="sf-sheet sf-hidden"><div class="sf-title"><b>镜匣 SceneFrame</b><button data-act="close" aria-label="关闭">×</button></div><div class="sf-row"><select id="sf-backend" class="sf-input"><option value="sd">A1111 / Forge</option><option value="nai">NovelAI</option></select><button data-act="toggle">自动：${state.settings.autoGenerate ? '开' : '关'}</button></div><div class="sf-section-title">检测到的图片块</div><div id="sf-detected"></div><div class="sf-section-title">Prompt 编辑</div><input id="sf-url" class="sf-input" placeholder="后端地址"><input id="sf-key" class="sf-input" type="password" placeholder="NovelAI API Key（仅本地）"><textarea id="sf-prompt" class="sf-textarea" placeholder="手动输入或粘贴 prompt"></textarea><input id="sf-negative" class="sf-input" placeholder="负面提示词"><div class="sf-row"><button data-act="generate">生成</button><button data-act="clear">清空</button></div><div id="sf-status" class="sf-status">v0.1.0 · 手动确认模式</div></section>`;
+  root.innerHTML = `<button class="sf-fab" title="SceneFrame">🖼️</button><section class="sf-sheet sf-hidden"><div class="sf-title"><b>镜匣 SceneFrame</b><button data-act="close" aria-label="关闭">×</button></div><div class="sf-row"><select id="sf-backend" class="sf-input"><option value="sd">A1111 / Forge</option><option value="nai">NovelAI</option></select><button data-act="toggle">自动：${state.settings.autoGenerate ? '开' : '关'}</button></div><div class="sf-section-title">提示词方案</div><div class="sf-row"><select id="sf-preset" class="sf-input"><option value="">未选择方案</option></select><button data-act="save-preset">另存方案</button><button data-act="delete-preset">删除</button></div><input id="sf-preset-name" class="sf-input" placeholder="方案名称，例如 NAI·水彩画师串"><div class="sf-section-title">前置提示词 · 画师串 / 固定画风</div><textarea id="sf-prefix" class="sf-textarea sf-short" placeholder="例如：artist:xxx, artist:yyy, watercolor, anime coloring"></textarea><div class="sf-section-title">检测到的图片块</div><div id="sf-detected"></div><div class="sf-section-title">场景 Prompt</div><input id="sf-url" class="sf-input" placeholder="后端地址"><input id="sf-key" class="sf-input" type="password" placeholder="NovelAI API Key（仅本地）"><textarea id="sf-prompt" class="sf-textarea" placeholder="AI 图片块或手动输入的场景 prompt"></textarea><div class="sf-section-title">负面提示词</div><textarea id="sf-negative" class="sf-textarea sf-short" placeholder="例如：lowres, bad anatomy, text"></textarea><div class="sf-row"><button data-act="generate">生成</button><button data-act="clear">清空场景</button></div><div id="sf-status" class="sf-status">v0.1.0 · 手动确认模式</div></section>`;
   document.body.append(root);
   const sheet = root.querySelector('.sf-sheet');
   const fab = root.querySelector('.sf-fab'); placeFab(fab); makeFabDraggable(fab);
   root.querySelector('#sf-backend').value = state.settings.backend;
   root.querySelector('#sf-url').value = state.settings.backend === 'nai' ? state.settings.naiUrl : state.settings.sdUrl;
+  root.querySelector('#sf-prefix').value = state.settings.positivePrefix;
   root.querySelector('#sf-negative').value = state.settings.negative;
+  const presetSelect = root.querySelector('#sf-preset');
+  presetSelect.insertAdjacentHTML('beforeend', (state.settings.presets || []).map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>`).join(''));
+  presetSelect.value = state.settings.activePresetId || '';
   fab.onclick = () => { if (state.fabDragged) { state.fabDragged = false; return; } sheet.classList.toggle('sf-hidden'); renderPending(); };
   root.querySelector('[data-act=close]').onclick = () => sheet.classList.add('sf-hidden');
   renderPending();
@@ -90,7 +103,20 @@ function render() {
   root.querySelector('#sf-backend').onchange = e => { state.settings.backend = e.target.value; save(); render(); };
   root.querySelector('#sf-url').onchange = e => { if (state.settings.backend === 'nai') state.settings.naiUrl = e.target.value; else state.settings.sdUrl = e.target.value; save(); };
   root.querySelector('#sf-key').onchange = e => { state.settings.naiKey = e.target.value; save(); };
-  root.querySelector('#sf-negative').onchange = e => { state.settings.negative = e.target.value; save(); };
+  root.querySelector('#sf-prefix').onchange = e => { state.settings.positivePrefix = e.target.value; state.settings.activePresetId = ''; save(); };
+  root.querySelector('#sf-negative').onchange = e => { state.settings.negative = e.target.value; state.settings.activePresetId = ''; save(); };
+  presetSelect.onchange = e => { if (!e.target.value) return; applyPreset(e.target.value); render(); setStatus('已切换提示词方案'); };
+  root.querySelector('[data-act=save-preset]').onclick = () => {
+    const name = val('#sf-preset-name').trim(); if (!name) return setStatus('请先填写方案名称');
+    const existing = presetById(state.settings.activePresetId);
+    const preset = { id: existing?.id || crypto.randomUUID(), name, positivePrefix: val('#sf-prefix'), negative: val('#sf-negative'), backend: val('#sf-backend') };
+    state.settings.presets = existing ? state.settings.presets.map(x => x.id === preset.id ? preset : x) : [...(state.settings.presets || []), preset];
+    state.settings.activePresetId = preset.id; state.settings.positivePrefix = preset.positivePrefix; state.settings.negative = preset.negative; save(); render(); setStatus(`已保存方案：${name}`);
+  };
+  root.querySelector('[data-act=delete-preset]').onclick = () => {
+    const id = state.settings.activePresetId; if (!id) return setStatus('请先选择要删除的方案');
+    const name = presetById(id)?.name || ''; state.settings.presets = state.settings.presets.filter(x => x.id !== id); state.settings.activePresetId = ''; save(); render(); setStatus(`已删除方案：${name}`);
+  };
   root.querySelector('[data-act=clear]').onclick = () => { root.querySelector('#sf-prompt').value = ''; state.current = null; };
   root.querySelector('[data-act=generate]').onclick = async () => {
     const prompt = normalizePrompt(val('#sf-prompt')); if (!prompt) return setStatus('请输入 prompt');
