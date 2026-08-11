@@ -1,0 +1,22 @@
+# Secrets and local settings
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+secrets/
+
+# Dependencies and builds
+node_modules/
+dist/
+coverage/
+
+# OS/editor files
+.DS_Store
+.vscode/
+.idea/
+
+# Local test artifacts
+*.log
+test-output/
+/screenshots/
